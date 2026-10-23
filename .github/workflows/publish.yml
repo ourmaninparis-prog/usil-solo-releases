@@ -1,0 +1,37 @@
+# Publishes a Usil Solo release from the files pushed to the "release-staging"
+# branch: the installer arrives in parts (to keep each push small), is
+# reassembled, checked against release.json, then attached to a GitHub release.
+name: Publish release
+on:
+  push:
+    branches: [release-staging]
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reassemble and check
+        id: prep
+        run: |
+          set -euo pipefail
+          version=$(jq -r .version release.json)
+          file=$(jq -r .file release.json)
+          dry=$(jq -r '.dryRun // false' release.json)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "file=$file" >> "$GITHUB_OUTPUT"
+          echo "dry=$dry" >> "$GITHUB_OUTPUT"
+          if [ "$dry" = "true" ]; then echo "Dry run for $version"; exit 0; fi
+          cat parts/part* > "$file"
+          echo "$(jq -r .sha256 release.json)  $file" | sha256sum -c -
+      - name: Create release
+        if: steps.prep.outputs.dry != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          v="${{ steps.prep.outputs.version }}"
+          f="${{ steps.prep.outputs.file }}"
+          gh release create "v$v" "$f" "$f.blockmap" "$f.sig" latest.yml \
+            --repo "$GITHUB_REPOSITORY" --target main --title "Usil Solo $v" --notes-file notes.md
